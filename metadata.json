@@ -1,0 +1,6 @@
+{
+  "name": "Smart Home IoT Dashboard v2",
+  "description": "Smart Home IoT Dashboard connected via MQTT. Includes Telegram Command generation, hardware status, live activity logs, and real-time remote relay controls.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
