@@ -1,73 +1,166 @@
 import React, { useState } from 'react';
-import { Send, Copy, CheckCircle2 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
-
-const TELEGRAM_COMMANDS = [
-  { cmd: '/lampu1_on', desc: 'Nyalakan Lampu 1' },
-  { cmd: '/lampu1_off', desc: 'Matikan Lampu 1' },
-  { cmd: '/lampu2_on', desc: 'Nyalakan Lampu 2' },
-  { cmd: '/lampu2_off', desc: 'Matikan Lampu 2' },
-  { cmd: '/lampu3_on', desc: 'Nyalakan Lampu 3' },
-  { cmd: '/lampu3_off', desc: 'Matikan Lampu 3' },
-  { cmd: '/lampu4_on', desc: 'Nyalakan Lampu 4' },
-  { cmd: '/lampu4_off', desc: 'Matikan Lampu 4' },
-  { cmd: '/all_on', desc: 'Semua Lampu ON' },
-  { cmd: '/all_off', desc: 'Semua Lampu OFF' },
-  { cmd: '/variasi1', desc: 'Aktifkan Variasi 1' },
-  { cmd: '/variasi2', desc: 'Aktifkan Variasi 2' },
-  { cmd: '/stop_variasi', desc: 'Stop Semua Variasi' },
-  { cmd: '/sensor', desc: 'Baca Suhu & Kelembaban' },
-  { cmd: '/status', desc: 'Status Semua Lampu' },
-];
+import { useMqtt } from '../mqttContext';
+import { Mic, MicOff, Send } from 'lucide-react';
 
 export function TelegramPanel() {
-  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const { toggleRelay, setVariation, toggleAllRelays } = useMqtt();
+  const [listening, setListening] = useState(false);
+  const [transcript, setTranscript] = useState('');
+  const [result, setResult] = useState('');
 
-  const handleCopy = (cmd: string) => {
-    navigator.clipboard.writeText(cmd);
-    setCopiedId(cmd);
-    setTimeout(() => setCopiedId(null), 2000);
+  const processCommand = (text: string) => {
+    const t = text.toLowerCase();
+    setTranscript(text);
+
+    // Stop variasi
+    if (t.includes('variasi') && (t.includes('stop') || t.includes('mati') || t.includes('henti'))) {
+      setVariation('STOP');
+      setResult('⏹ Variasi dihentikan');
+      return;
+    }
+    // Variasi 1
+    if (t.includes('variasi') && (t.includes('1') || t.includes('satu'))) {
+      setVariation('VARIASI1');
+      setResult('🎉 Variasi 1 aktif');
+      return;
+    }
+    // Variasi 2
+    if (t.includes('variasi') && (t.includes('2') || t.includes('dua'))) {
+      setVariation('VARIASI2');
+      setResult('🎉 Variasi 2 aktif');
+      return;
+    }
+    // Semua ON
+    if ((t.includes('nyala') || t.includes('hidup') || t.includes('on')) &&
+        (t.includes('semua') || t.includes('all')) && !t.match(/lampu\s*[1-4]/)) {
+      toggleAllRelays(true);
+      setResult('⚡ Semua lampu ON');
+      return;
+    }
+    // Semua OFF
+    if ((t.includes('mati') || t.includes('off') || t.includes('padam')) &&
+        (t.includes('semua') || t.includes('all')) && !t.match(/lampu\s*[1-4]/)) {
+      toggleAllRelays(false);
+      setResult('🔴 Semua lampu OFF');
+      return;
+    }
+    // Per lampu
+    const lampuMap: Record<string, 'lampu1'|'lampu2'|'lampu3'|'lampu4'> = {
+      '1': 'lampu1', 'satu': 'lampu1',
+      '2': 'lampu2', 'dua':  'lampu2',
+      '3': 'lampu3', 'tiga': 'lampu3',
+      '4': 'lampu4', 'empat':'lampu4',
+    };
+    for (const [key, relay] of Object.entries(lampuMap)) {
+      if (t.includes(key)) {
+        const isOn = t.includes('nyala') || t.includes('hidup') || t.includes('on');
+        const isOff = t.includes('mati') || t.includes('off') || t.includes('padam');
+        if (isOn)  { toggleRelay(relay, true);  setResult(`💡 ${relay} ON`);  return; }
+        if (isOff) { toggleRelay(relay, false); setResult(`🔌 ${relay} OFF`); return; }
+      }
+    }
+    setResult('❓ Perintah tidak dikenali');
   };
 
+  const startVoice = () => {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      setResult('Browser tidak mendukung voice. Gunakan Chrome.');
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'id-ID';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    setListening(true);
+    setResult('🎤 Mendengarkan...');
+    recognition.start();
+
+    recognition.onresult = (event: any) => {
+      const text = event.results[0][0].transcript;
+      processCommand(text);
+      setListening(false);
+    };
+
+    recognition.onerror = () => {
+      setResult('❌ Gagal mendengar, coba lagi');
+      setListening(false);
+    };
+
+    recognition.onend = () => setListening(false);
+  };
+
+  const [manualText, setManualText] = useState('');
+
   return (
-    <div className="bg-white/40 border border-white backdrop-blur-md rounded-[2.5rem] p-6 flex-grow flex flex-col relative overflow-hidden h-[300px] lg:h-auto lg:min-h-[400px]">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-xs font-black uppercase tracking-[0.2em] text-indigo-500">Telegram Commands</h3>
-        <Send className="h-4 w-4 text-indigo-400" />
-      </div>
-      <div className="overflow-y-auto space-y-2 pr-2 custom-scrollbar flex-grow min-h-[0] mb-4">
-        {TELEGRAM_COMMANDS.map((item) => (
-          <div
-            key={item.cmd}
-            onClick={() => handleCopy(item.cmd)}
-            className="group flex items-center justify-between p-2 rounded-xl hover:bg-indigo-50 cursor-pointer transition-colors"
-          >
-            <code className="text-xs font-bold text-slate-600">{item.cmd}</code>
-            {copiedId === item.cmd ? (
-              <CheckCircle2 size={12} className="text-emerald-500" />
-            ) : (
-              <Copy size={12} className="opacity-0 group-hover:opacity-100 text-indigo-400 transition-opacity" />
-            )}
-          </div>
-        ))}
-      </div>
-      <div className="mt-auto p-4 bg-indigo-100/50 rounded-2xl border border-indigo-200 flex-shrink-0">
-        <p className="text-[10px] text-indigo-600 font-bold uppercase tracking-tighter">Note: Bot is controlled by ESP32 logic.</p>
+    <div className="bg-white/40 border border-white backdrop-blur-md rounded-[2.5rem] p-8">
+      <h3 className="text-sm font-black uppercase tracking-[0.2em] mb-6 text-slate-400">
+        Voice & Text Command
+      </h3>
+
+      {/* Voice Button */}
+      <button
+        onClick={startVoice}
+        className={`w-full py-5 rounded-[2rem] font-black text-sm transition-all mb-4 flex items-center justify-center gap-2 ${
+          listening
+            ? 'bg-pink-400 text-white animate-pulse'
+            : 'bg-slate-800 text-white hover:bg-slate-700'
+        }`}
+      >
+        {listening ? <MicOff size={18} /> : <Mic size={18} />}
+        {listening ? 'Mendengarkan...' : 'Tekan & Bicara'}
+      </button>
+
+      {/* Manual text */}
+      <div className="flex gap-2 mb-4">
+        <input
+          type="text"
+          value={manualText}
+          onChange={e => setManualText(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { processCommand(manualText); setManualText(''); }}}
+          placeholder="Atau ketik perintah..."
+          className="flex-1 px-4 py-3 rounded-2xl border border-slate-200 bg-white/60 text-sm outline-none"
+        />
+        <button
+          onClick={() => { processCommand(manualText); setManualText(''); }}
+          className="px-4 py-3 bg-emerald-400 text-white rounded-2xl font-bold"
+        >
+          <Send size={16} />
+        </button>
       </div>
 
-      {/* Toast Notification */}
-      <AnimatePresence>
-        {copiedId && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9, x: "-50%", y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.9, y: 10 }}
-            className="absolute bottom-24 left-1/2 bg-slate-800 text-white px-4 py-2 rounded-full font-bold text-sm shadow-xl flex items-center gap-2 z-50 pointer-events-none whitespace-nowrap"
-          >
-            <CheckCircle2 size={16} className="text-emerald-400" /> Copied
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Transcript */}
+      {transcript && (
+        <div className="p-4 bg-white/60 rounded-2xl border border-slate-100 mb-3">
+          <p className="text-xs text-slate-400 mb-1">Terdeteksi:</p>
+          <p className="text-sm font-bold text-slate-700">"{transcript}"</p>
+        </div>
+      )}
+
+      {/* Result */}
+      {result && (
+        <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100">
+          <p className="text-sm font-bold text-emerald-700">{result}</p>
+        </div>
+      )}
+
+      {/* Hint */}
+      <div className="mt-4 p-4 bg-white/40 rounded-2xl">
+        <p className="text-xs text-slate-400 font-bold mb-2">Contoh perintah suara:</p>
+        <div className="grid grid-cols-2 gap-1">
+          {['Nyalakan lampu 1','Matikan semua lampu','Berapa temperatur','Nyalakan variasi 1','Nyalakan variasi 2','Stop variasi'].map(c => (
+            <button key={c} onClick={() => processCommand(c)}
+              className="text-left text-xs text-slate-500 hover:text-pink-400 py-1 px-2 rounded-lg hover:bg-pink-50 transition-colors">
+              "{c}"
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
